@@ -70,6 +70,20 @@ export default function MenuApp() {
   }, []);
 
   // Track login state
+    const [isStaff, setIsStaff] = useState(false);
+  useEffect(() => {
+    if (!user || !restaurant) {
+      setIsStaff(false);
+      return;
+    }
+    supabase
+      .from("restaurant_staff")
+      .select("role")
+      .eq("restaurant_id", restaurant.id)
+      .eq("user_id", user.id)
+      .maybeSingle()
+      .then(({ data }) => setIsStaff(!!data));
+  }, [user, restaurant]);
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setUser(data.session?.user ?? null));
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) =>
@@ -125,6 +139,9 @@ export default function MenuApp() {
             {user ? (
               <>
                 <a href="/orders" className="text-sm text-neutral-300 hover:text-amber-300">My orders</a>
+                {isStaff && (
+                  <a href="/admin" className="text-sm text-amber-300 hover:underline">Admin</a>
+                )}
                 <span className="hidden text-sm text-neutral-400 md:block">{user.email}</span>
                 <button
                   onClick={() => supabase.auth.signOut()}
