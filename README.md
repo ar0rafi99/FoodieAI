@@ -1,36 +1,87 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🍽️ FoodieAI — Restaurant Ordering Platform with AI Assistant
 
-## Getting Started
+A full-stack, multi-tenant-ready online ordering system for restaurants: customer storefront, live admin dashboard, AI chat assistant (English + Bangla), support tickets and a recommendation engine.
 
-First, run the development server:
+**Live demo:** https://foodie-ai-rho.vercel.app
 
+   ![Storefront](docs/storefront.png)
+   ![Admin](docs/admin.png)
+   ![CheckOut](docs/checkout.png)
+   ![Chat](docs/chat.png)
+
+## ✨ Features
+
+**Customer**
+- Dark, responsive storefront with search and category filters
+- Cart, email sign-up/sign-in, checkout (cash on delivery)
+- "My Orders" page with **live order tracking** (updates without refresh)
+- **AI assistant** that knows the live menu, answers in English or Bangla, and hands off to staff
+- **Recommendations**: "Goes well with your order" (item-based collaborative filtering)
+
+**Restaurant admin (`/admin`)**
+- Real-time new-order alerts with sound
+- Order workflow: Pending → Preparing → Out for delivery → Delivered / Cancelled
+- Sales dashboard: orders today, revenue, average order value, top sellers
+- Menu management: add/edit/delete items, photo upload, in-stock toggle, categories
+- Support ticket inbox (`/admin/tickets`)
+
+## 🧱 Tech stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | Next.js (App Router), React, Tailwind CSS |
+| Backend / DB | Supabase (PostgreSQL, Auth, Storage, Realtime) |
+| AI | Google Gemini API (called from a server route, key never exposed) |
+| Hosting | Vercel |
+
+## 🔒 Security design
+
+- **Row Level Security** on every table; customers only read their own orders
+- Order totals are calculated **server-side in a Postgres function** (`place_order`), so prices can't be tampered with from the browser
+- Staff can only change an order's `status` column
+- Admin access is enforced in the database via a `restaurant_staff` table, not just hidden in the UI
+- AI API key stays on the server; per-IP rate limiting protects quota; no customer phone/address is ever sent to the AI
+
+## 🚀 Setup
+
+**1. Clone and install**
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone https://github.com/ar0rafi99/FoodieAI.git
+cd FoodieAI
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+**2. Create a Supabase project** (free tier works), then open **SQL Editor** and run the whole of [`schema.sql`](./schema.sql) once.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+**3. Environment variables** — create `.env.local`:
+```
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_or_publishable_key
+GEMINI_API_KEY=your_google_ai_studio_key
+GEMINI_MODEL=gemini-flash-latest
+```
+> Never put a `service_role` key in this project. Never prefix `GEMINI_API_KEY` with `NEXT_PUBLIC_`.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+**4. Run**
+```bash
+npm run dev
+```
+Open http://localhost:3000, sign up, then make yourself the owner by running the commented SQL at the bottom of `schema.sql` with your email. Your admin panel is at `/admin`.
 
-## Learn More
+**5. Deploy** — push to GitHub, import into Vercel, add the same four environment variables, and set your Vercel URL as the **Site URL** in Supabase → Authentication → URL Configuration.
 
-To learn more about Next.js, take a look at the following resources:
+## 🗺️ Roadmap
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- [ ] Subdomain-based multi-restaurant mode (`pizzahouse.yourapp.com`)
+- [ ] Restaurant self-signup and subscription billing
+- [ ] Online payments (Stripe / SSLCommerz / bKash)
+- [ ] SMS / WhatsApp notifications
+- [ ] Coupons and loyalty points
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 🤖 Development note
 
-## Deploy on Vercel
+Built with AI-assisted development (Claude). Architecture, database design, security rules and deployment were reviewed, tested and understood by the author.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 📄 License
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+All rights reserved unless a license file states otherwise.
