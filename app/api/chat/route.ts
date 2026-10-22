@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { supabase } from "../../lib/supabase";
 import { RESTAURANT_SLUG } from "../../config/restaurant";
-
-
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
 
 const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
 const MAX_MSG_CHARS = 500;
@@ -64,6 +64,36 @@ export async function POST(req: Request) {
     return NextResponse.json(
       { reply: "You're sending messages too fast. Please wait a minute and try again." },
       { status: 429 }
+    );
+  }
+
+  // ---- Vibe96 Mandatory Authentication Check ----
+  try {
+    const cookieStore = await cookies();
+    const supabaseServer = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return cookieStore.getAll();
+          },
+          setAll() {},
+        },
+      }
+    );
+    const { data: { session } } = await supabaseServer.auth.getSession();
+    if (!session) {
+      return NextResponse.json(
+        { reply: "Unauthorized: Please sign in to use the AI assistant." },
+        { status: 401 }
+      );
+    }
+  } catch (e) {
+    console.error("Auth check error:", e);
+    return NextResponse.json(
+      { reply: "Authentication check failed." },
+      { status: 401 }
     );
   }
 
