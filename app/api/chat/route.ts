@@ -156,7 +156,7 @@ ${menuText}`;
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": key },
         body: JSON.stringify({
-          systemInstruction: { parts: [{ text: system }] },
+          systemInstruction: { parts: [ { text: system }] },
           contents,
           generationConfig: { temperature: 0.6, maxOutputTokens: 1000 },
         }),
