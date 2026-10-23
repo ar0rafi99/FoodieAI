@@ -1,30 +1,40 @@
 import { NextResponse } from "next/server";
-import { supabase } from "../../lib/supabase";
+import { supabaseServer } from "../../lib/supabase-server";
 import { RESTAURANT_SLUG } from "../../config/restaurant";
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
+import { AI_CONFIG } from "../../config/ai";
 
-const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
-const MAX_MSG_CHARS = 500;
-const MAX_HISTORY = 10;
+/**
+ * POST /api/chat
+ * - Read-only: it never creates, updates or deletes data.
+ * - Requires a signed-in user (Bearer access token verified by Supabase Auth)
+ *   unless CHAT_REQUIRE_LOGIN=false.
+ * - Rate limited per user (or per IP when anonymous chat is enabled).
+ * - The AI key stays on the server and no customer phone/address is sent to the AI.
+ */
 
-// ---- Simple per-IP rate limit (protects your free quota) ----
+// ---- Rate limit (in-memory; use Redis/Upstash if you run several instances) ----
 const hits = new Map<string, number[]>();
-function limited(ip: string) {
+function limited(key: string) {
   const now = Date.now();
-  const recent = (hits.get(ip) ?? []).filter((t) => now - t < 60_000);
+  const recent = (hits.get(key) ?? []).filter((t) => now - t < 60_000);
   recent.push(now);
-  hits.set(ip, recent);
-  return recent.length > 8;
+  hits.set(key, recent);
+
+  if (hits.size > 5000) {
+    for (const [k, v] of hits) {
+      if (!v.some((t) => now - t < 60_000)) hits.delete(k);
+    }
+  }
+  return recent.length > AI_CONFIG.rateLimitPerMinute;
 }
 
-// ---- Menu knowledge (cached for 60s) ----
+// ---- Menu knowledge (cached) ----
 let cache: { text: string; at: number } | null = null;
 
 async function getMenuContext(): Promise<string | null> {
-  if (cache && Date.now() - cache.at < 60_000) return cache.text;
+  if (cache && Date.now() - cache.at < AI_CONFIG.menuCacheMs) return cache.text;
 
-  const { data: r } = await supabase
+  const { data: r } = await supabaseServer
     .from("restaurants")
     .select("id, name, currency, delivery_fee")
     .eq("slug", RESTAURANT_SLUG)
@@ -32,11 +42,12 @@ async function getMenuContext(): Promise<string | null> {
   if (!r) return null;
 
   const [cats, menu] = await Promise.all([
-    supabase.from("categories").select("id, name").eq("restaurant_id", r.id),
-    supabase
+    supabaseServer.from("categories").select("id, name").eq("restaurant_id", r.id),
+    supabaseServer
       .from("menu_items")
       .select("name, description, price, category_id")
-      .eq("restaurant_id", r.id),
+      .eq("restaurant_id", r.id)
+      .eq("is_available", true),
   ]);
 
   const catName = new Map((cats.data ?? []).map((c) => [c.id, c.name]));
@@ -59,41 +70,26 @@ async function getMenuContext(): Promise<string | null> {
 type ClientMsg = { role: string; content: string };
 
 export async function POST(req: Request) {
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
-  if (limited(ip)) {
+  // 1) Authentication: verify the access token with Supabase Auth
+  const token = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim();
+  let userId: string | null = null;
+  if (token) {
+    const { data } = await supabaseServer.auth.getUser(token);
+    userId = data.user?.id ?? null;
+  }
+  if (AI_CONFIG.requireLogin && !userId) {
     return NextResponse.json(
-      { reply: "You're sending messages too fast. Please wait a minute and try again." },
-      { status: 429 }
+      { reply: "Please sign in to chat with our assistant." },
+      { status: 401 }
     );
   }
 
-  // ---- Vibe96 Mandatory Authentication Check ----
-  try {
-    const cookieStore = await cookies();
-    const supabaseServer = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() {
-            return cookieStore.getAll();
-          },
-          setAll() {},
-        },
-      }
-    );
-    const { data: { session } } = await supabaseServer.auth.getSession();
-    if (!session) {
-      return NextResponse.json(
-        { reply: "Unauthorized: Please sign in to use the AI assistant." },
-        { status: 401 }
-      );
-    }
-  } catch (e) {
-    console.error("Auth check error:", e);
+  // 2) Rate limit per user (or per IP for anonymous visitors)
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
+  if (limited(userId ?? ip)) {
     return NextResponse.json(
-      { reply: "Authentication check failed." },
-      { status: 401 }
+      { reply: "You're sending messages too fast. Please wait a minute and try again." },
+      { status: 429 }
     );
   }
 
@@ -102,6 +98,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ reply: "Chat is not configured yet." }, { status: 500 });
   }
 
+  // 3) Validate input
   let body: { messages?: ClientMsg[] };
   try {
     body = await req.json();
@@ -118,10 +115,10 @@ export async function POST(req: Request) {
         typeof m.content === "string" &&
         m.content.trim().length > 0
     )
-    .slice(-MAX_HISTORY)
+    .slice(-AI_CONFIG.maxHistory)
     .map((m) => ({
       role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content.slice(0, MAX_MSG_CHARS) }],
+      parts: [{ text: m.content.slice(0, AI_CONFIG.maxMessageChars) }],
     }));
 
   while (contents.length && contents[0].role === "model") contents.shift();
@@ -151,12 +148,12 @@ ${menuText}`;
 
   try {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${AI_CONFIG.model}:generateContent`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": key },
         body: JSON.stringify({
-          systemInstruction: { parts: [ { text: system }] },
+          systemInstruction: { parts: [{ text: system }] },
           contents,
           generationConfig: { temperature: 0.6, maxOutputTokens: 1000 },
         }),

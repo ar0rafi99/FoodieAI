@@ -1,6 +1,7 @@
 -- =====================================================================
--- FoodieAI - complete database setup (run ONCE in Supabase SQL Editor)
--- Multi-tenant ready: every table carries restaurant_id
+-- FoodieAI - database schema (run FIRST, once, on an empty Supabase project)
+-- Then run seed.sql for demo data.
+-- Multi-tenant ready: every table carries restaurant_id.
 -- =====================================================================
 
 -- ---------- 1) TABLES ----------
@@ -99,12 +100,12 @@ alter table order_items enable row level security;
 alter table restaurant_staff enable row level security;
 alter table support_tickets enable row level security;
 
--- Public menu
+-- Public menu (read-only)
 create policy "public read restaurants" on restaurants for select using (true);
 create policy "public read categories" on categories for select using (true);
 create policy "public read menu_items" on menu_items for select using (is_available = true);
 
--- Customers: read ONLY their own orders
+-- Customers: read ONLY their own orders (orders are created via place_order(), see below)
 create policy "read own orders" on orders
   for select using (auth.uid() = user_id);
 create policy "read own order items" on order_items
@@ -112,7 +113,7 @@ create policy "read own order items" on order_items
     exists (select 1 from orders o where o.id = order_id and o.user_id = auth.uid())
   );
 
--- Staff
+-- Staff (role-protected admin area)
 create policy "staff read own membership" on restaurant_staff
   for select using (user_id = auth.uid());
 
@@ -141,22 +142,22 @@ create policy "staff update categories" on categories
 create policy "staff delete categories" on categories
   for delete using (is_staff(restaurant_id));
 
--- Support tickets: anyone can create, only staff can read/update
-create policy "anyone can create ticket" on support_tickets
-  for insert to anon, authenticated
+-- Support tickets: SIGNED-IN users can create (for themselves); only staff can read/update
+create policy "signed-in users can create tickets" on support_tickets
+  for insert to authenticated
   with check (
-    status = 'open'
+    user_id = auth.uid()
+    and status = 'open'
     and char_length(message) between 1 and 1000
     and char_length(name) between 1 and 100
     and char_length(phone) between 5 and 30
-    and (user_id is null or user_id = auth.uid())
   );
 create policy "staff read tickets" on support_tickets
   for select using (is_staff(restaurant_id));
 create policy "staff update tickets" on support_tickets
   for update using (is_staff(restaurant_id)) with check (is_staff(restaurant_id));
 
--- Staff may change ONLY the order status, nothing else
+-- Staff may change ONLY the order status column, nothing else
 revoke update on orders from anon, authenticated;
 grant update (status) on orders to authenticated;
 
@@ -260,7 +261,7 @@ $$;
 
 grant execute on function recommend_items(uuid, uuid[], int) to anon, authenticated;
 
--- ---------- 6) IMAGE STORAGE ----------
+-- ---------- 6) IMAGE STORAGE (staff upload into a folder named after their restaurant id) ----------
 insert into storage.buckets (id, name, public)
 values ('menu-images', 'menu-images', true)
 on conflict (id) do nothing;
@@ -293,38 +294,14 @@ create policy "staff delete menu images" on storage.objects
 -- ---------- 7) REALTIME (live order alerts) ----------
 alter publication supabase_realtime add table orders;
 
--- ---------- 8) DEMO DATA (emoji only, no copyrighted images) ----------
-insert into restaurants (name, slug, currency, delivery_fee)
-values ('FoodieAI Kitchen', 'foodieai-kitchen', 'USD', 3.99);
-
-insert into categories (restaurant_id, name, sort_order)
-select r.id, c.name, c.ord
-from restaurants r,
-     (values ('Mains', 1), ('Fast Food', 2), ('Drinks', 3), ('Desserts', 4)) as c(name, ord)
-where r.slug = 'foodieai-kitchen';
-
-insert into menu_items (restaurant_id, category_id, name, description, price, emoji)
-select r.id, c.id, v.name, v.description, v.price, v.emoji
-from restaurants r
-join categories c on c.restaurant_id = r.id
-join (values
-  ('Mains', 'Chicken Biryani', 'Fragrant basmati rice slow-cooked with spiced chicken', 12.50, '🍛'),
-  ('Mains', 'Grilled Salmon', 'Fresh salmon fillet with lemon butter and veggies', 16.00, '🐟'),
-  ('Mains', 'Veggie Fried Rice', 'Wok-tossed rice with seasonal vegetables', 9.50, '🍳'),
-  ('Mains', 'Pasta Alfredo', 'Creamy parmesan sauce with fettuccine', 11.00, '🍝'),
-  ('Fast Food', 'Chicken Burger', 'Crispy chicken patty, cheese and house sauce', 8.50, '🍔'),
-  ('Fast Food', 'Pepperoni Pizza', '10-inch pizza with extra mozzarella', 14.00, '🍕'),
-  ('Fast Food', 'Crispy Fries', 'Golden fries with seasoning', 4.50, '🍟'),
-  ('Drinks', 'Mango Lassi', 'Chilled yogurt drink with ripe mango', 4.00, '🥛'),
-  ('Drinks', 'Iced Coffee', 'Cold brew with a scoop of ice cream', 4.50, '🧋'),
-  ('Drinks', 'Fresh Lemonade', 'Squeezed lemons, mint and a touch of sugar', 3.50, '🍋'),
-  ('Desserts', 'Cheesecake', 'Creamy New York style cheesecake slice', 6.00, '🍰'),
-  ('Desserts', 'Ice Cream Sundae', 'Vanilla ice cream with chocolate sauce', 5.50, '🍨')
-) as v(category, name, description, price, emoji) on v.category = c.name
-where r.slug = 'foodieai-kitchen';
-
--- ---------- 9) MAKE YOURSELF THE OWNER (sign up on the site first, then run) ----------
--- insert into restaurant_staff (restaurant_id, user_id)
--- select r.id, u.id
--- from restaurants r, auth.users u
--- where r.slug = 'foodieai-kitchen' and u.email = 'YOUR_EMAIL@example.com';
+-- ---------- 8) INDEXES (foreign keys and common filters) ----------
+create index if not exists idx_orders_user_id            on orders (user_id);
+create index if not exists idx_orders_restaurant_created on orders (restaurant_id, created_at desc);
+create index if not exists idx_order_items_order_id      on order_items (order_id);
+create index if not exists idx_order_items_menu_item_id  on order_items (menu_item_id);
+create index if not exists idx_menu_items_restaurant     on menu_items (restaurant_id);
+create index if not exists idx_menu_items_category       on menu_items (category_id);
+create index if not exists idx_categories_restaurant     on categories (restaurant_id);
+create index if not exists idx_tickets_restaurant_created on support_tickets (restaurant_id, created_at desc);
+create index if not exists idx_tickets_user_id           on support_tickets (user_id);
+create index if not exists idx_staff_user_id             on restaurant_staff (user_id);

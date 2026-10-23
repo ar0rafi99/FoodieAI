@@ -81,6 +81,7 @@ Open http://localhost:3000, sign up, then make yourself the owner by running the
 ## 🤖 Development note
 
 Built with AI-assisted development (Claude). Architecture, database design, security rules and deployment were reviewed, tested and understood by the author.
+Built on Next.js 16 (stable).
 
 ## 📄 License
 

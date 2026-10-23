@@ -1,0 +1,22 @@
+# FoodieAI - runs the web app in Docker.
+# The database is Supabase (cloud free tier or self-hosted), not part of this file.
+#
+# Usage:
+#   cp .env.example .env      # then fill in your own values
+#   docker compose up --build -d
+#   open http://localhost:3000
+
+services:
+  web:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+    ports:
+      - "3000:3000"
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-flash-latest}
+      CHAT_REQUIRE_LOGIN: ${CHAT_REQUIRE_LOGIN:-true}
+    restart: unless-stopped

@@ -25,7 +25,7 @@ export default function ChatWidget({ restaurantId }: { restaurantId: string }) {
   const [tName, setTName] = useState("");
   const [tPhone, setTPhone] = useState("");
   const [tMsg, setTMsg] = useState("");
-  const [tState, setTState] = useState<"idle" | "sending" | "done" | "error">("idle");
+  const [tState, setTState] = useState<"idle" | "sending" | "done" | "error" | "auth">("idle");
 
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -43,9 +43,13 @@ export default function ChatWidget({ restaurantId }: { restaurantId: string }) {
     setLoading(true);
 
     try {
+      const { data: sess } = await supabase.auth.getSession();
       const res = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(sess.session ? { Authorization: `Bearer ${sess.session.access_token}` } : {}),
+        },
         body: JSON.stringify({ messages: next }),
       });
       const data = await res.json();
@@ -60,9 +64,13 @@ export default function ChatWidget({ restaurantId }: { restaurantId: string }) {
     e.preventDefault();
     setTState("sending");
     const { data: sess } = await supabase.auth.getSession();
+    if (!sess.session) {
+      setTState("auth");
+      return;
+    }
     const { error } = await supabase.from("support_tickets").insert({
       restaurant_id: restaurantId,
-      user_id: sess.session?.user.id ?? null,
+      user_id: sess.session.user.id,
       name: tName.trim(),
       phone: tPhone.trim(),
       message: tMsg.trim(),
@@ -124,6 +132,9 @@ export default function ChatWidget({ restaurantId }: { restaurantId: string }) {
                   <input required type="tel" minLength={5} placeholder="Phone number" value={tPhone} onChange={(e) => setTPhone(e.target.value)} className={inputClass} />
                   <textarea required rows={4} maxLength={1000} placeholder="How can we help?" value={tMsg} onChange={(e) => setTMsg(e.target.value)} className={inputClass} />
                   {tState === "error" && <p className="text-sm text-red-400">Could not send. Please try again.</p>}
+                  {tState === "auth" && (
+                    <p className="text-sm text-amber-300">Please sign in first (top of the page), then send your message.</p>
+                  )}
                   <button
                     disabled={tState === "sending"}
                     className="w-full rounded-xl bg-amber-400 py-2.5 text-sm font-semibold text-black hover:bg-amber-300 disabled:opacity-60"
